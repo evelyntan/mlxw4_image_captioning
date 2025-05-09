@@ -184,15 +184,22 @@ class Decoder(nn.Module):
 
     def forward(self, text_embeddings, img_features, padding_mask=None, return_logits=True):
         # Project image and text features to same dimension
-        img_features = self.image_projection(img_features)  # [batch, num_patches, embedding_dim]
-        text_embeddings = self.text_projection(text_embeddings)  # [batch, seq_len, embedding_dim]
-        
-        # Concatenate image features and text embeddings
-        decoder_inputs = torch.cat([img_features, text_embeddings], dim=1)
-        
-        # Add new positional embeddings
-        #decoder_inputs = decoder_inputs + self.positional_embeddings
+        img_features = self.image_projection(img_features)  # [batch, num_captions, num_patches, embedding_dim]
+        text_embeddings = self.text_projection(text_embeddings)  # [batch, num_captions, seq_len, embedding_dim]
+        #print(f"Image features shape: {img_features.shape}")
+        #print(f"Text embeddings shape: {text_embeddings.shape}")
 
+        # Reshape to combine batch and caption dimensions
+        batch_size, num_captions = img_features.shape[:2]
+        img_features = img_features.view(batch_size * num_captions, 49, 256)  # [batch*num_captions, num_patches, embedding_dim]
+        text_embeddings = text_embeddings.view(batch_size * num_captions, 18, 256)  # [batch*num_captions, seq_len, embedding_dim]
+        #print(f"Reshaped image features: {img_features.shape}")
+        #print(f"Reshaped text embeddings: {text_embeddings.shape}")
+
+        # Concatenate image features and text embeddings
+        decoder_inputs = torch.cat([img_features, text_embeddings], dim=1)  # [batch*num_captions, num_patches+seq_len, embedding_dim]
+        #print(f"Decoder inputs shape: {decoder_inputs.shape}") # we would expect [6, 67, 256]
+        
         # Pass through decoder blocks
         for block in self.decoder_blocks:
             decoder_inputs = block(decoder_inputs, padding_mask)
@@ -200,13 +207,15 @@ class Decoder(nn.Module):
         # Apply final layer norm
         decoder_features = self.final_ln(decoder_inputs)
 
-        # Get text hidden states only
-        text_hidden = decoder_features[:, -32:, :]
+        # Get text hidden states only (18 tokens, not 32!)
+        text_hidden = decoder_features[:, -18:, :]  # [batch*num_captions, seq_len, embedding_dim]
+        #print(f"Text hidden states shape: {text_hidden.shape}")
         
         if return_logits:
             # Convert features to logits for prediction
-            # Shape: [batch_size, seq_length, vocab_size]
+            # Shape: [batch*num_captions, seq_len, vocab_size]
             logits = self.output_projection(text_hidden)
+            #print(f"Logits shape: {logits.shape}")
             return logits
         else:
             # Return decoder features if needed

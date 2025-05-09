@@ -60,17 +60,31 @@ class CaptionDataset(Dataset):
                 all_masks.append(mask)
         
         # Stack all embeddings and targets on CPU
-        text_embeddings = torch.stack(all_text_embeddings)
-        target_ids = torch.stack(all_target_ids)
-        masks = torch.stack(all_masks)
+        text_embeddings = torch.stack(all_text_embeddings)  # [num_captions, seq_len, 512]
+        target_ids = torch.stack(all_target_ids)  # [num_captions, seq_len]
+        masks = torch.stack(all_masks)  # [num_captions, seq_len]
+        
+        print(f"After stacking:")
+        print(f"text_embeddings: {text_embeddings.shape}")
+        print(f"target_ids: {target_ids.shape}")
+        print(f"masks: {masks.shape}")
         
         # Duplicate image embeddings to match number of captions
-        patch_embeddings = patch_embeddings.unsqueeze(0).repeat(num_captions, 1, 1)
+        patch_embeddings = patch_embeddings.unsqueeze(0).repeat(num_captions, 1, 1)  # [num_captions, 49, 768]
+        print(f"After duplicating image embeddings: {patch_embeddings.shape}")
         
-        #print('IMG EMBEDDINGS SHAPE', patch_embeddings.shape)
-        #print('TEXT EMBEDDINGS SHAPE', text_embeddings.shape)
-        #print('TARGET IDS SHAPE', target_ids.shape)
-        #print('MASK SHAPE', masks.shape)
+        # Reshape tensors to combine batch and caption dimensions
+        batch_size = num_captions
+        patch_embeddings = patch_embeddings.view(-1, 49, 768)  # [batch_size, num_patches, hidden_dim]
+        text_embeddings = text_embeddings.view(-1, 18, 512)  # [batch_size, seq_len, hidden_dim]
+        target_ids = target_ids.view(-1, 18)  # [batch_size, seq_len]
+        masks = masks.view(-1, 18)  # [batch_size, seq_len]
+        
+        print(f"After final reshaping:")
+        print(f"patch_embeddings: {patch_embeddings.shape}")
+        print(f"text_embeddings: {text_embeddings.shape}")
+        print(f"target_ids: {target_ids.shape}")
+        print(f"masks: {masks.shape}")
         
         return patch_embeddings, text_embeddings, target_ids, masks
             

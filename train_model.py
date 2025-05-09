@@ -4,190 +4,248 @@ from transformers import CLIPTokenizer
 from decoder import Decoder
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader, random_split
+from datasets import load_dataset
+from load_data import CaptionDataset
+import wandb
+from datetime import datetime
+import multiprocessing
+import os
+
+# Set multiprocessing start method to 'spawn' to use CUDA with multiprocessing
+if __name__ == "__main__":
+    multiprocessing.set_start_method('spawn', force=True)
 
 tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def cleanup():
+    # Cleanup CUDA resources
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
-# Parameters for decoder
-embedding_dim = 256
-num_heads = 8
-mlp_dimension = 2048
-num_layers = 4
-input_sequence_length = 32
-vocab_size = 49408
-
-decoder = Decoder(embedding_dim=embedding_dim, num_heads=num_heads, 
-                  mlp_dimension=mlp_dimension, num_layers=num_layers, 
-                  vocab_size=vocab_size).to(device)
-
-# Define loss function and optimizer
-criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
-optimizer = optim.Adam(decoder.parameters(), lr=1e-4)
-
-# Move projection layer to device
-image_projection_layer = nn.Linear(768, embedding_dim).to(device)
-text_projection_layer = nn.Linear(512, embedding_dim).to(device)
-
-# Training loop
-num_epochs = 20
-for epoch in range(num_epochs):
-
-    decoder.train()
-
-    # Training phase
-    train_pbar = tqdm(train_dataloader, desc=f'Epoch {epoch+1}/{num_epochs} [Train]', mininterval=0.1)
-
-    epoch_losses = [] # store all individual losses and calculate the true average at the end
-
-    # Iterate over the DataLoader and print the outputs
-    for batch_idx, (patch_embeddings, text_embeddings, target_ids, mask) in enumerate(train_pbar):
-
-        # Move everything to device
-        patch_embeddings = patch_embeddings.to(device)
-        text_embeddings = text_embeddings.to(device)
-        mask = mask.to(device)
-        targets = target_ids.to(device)
-        img_features = image_projection_layer(patch_embeddings)
-        text_features = text_projection_layer(text_embeddings)
-
+def train(config=None):
+    # Get current timestamp for run name
+    timestamp = datetime.now().strftime("%m%d_%H%M")
+    run_number = config.run_number if hasattr(config, 'run_number') else 1
+    run_name = f"run_{run_number}_{timestamp}"
     
-        #print('\nProjected img shape:', img_features.shape)
-        #print('Projected text shape:', text_embeddings.shape)
-
-        #print('Mask shape:', mask.shape)
-
-
-        text_embeddings = text_embeddings.to(device)
-        img_features = img_features.to(device)
-        targets = target_ids.to(device)
-
-        # Forward pass through the decoder
-        logits = decoder(text_features, img_features)
-
-        #print('logits shape:', logits.shape)
-
-        # Compute loss
-        # Shift logits and targets to align for cross-entropy
-        logits = logits[:, :-1].contiguous().view(-1, logits.size(-1))
-        targets = target_ids[:, 1:].contiguous().view(-1)
-        loss = criterion(logits, targets)
-
-        # Calculate loss only on text portion
-        #text_logits = logits[:, -32:, :] # Shape: [batch_size, 32, vocab_size]
-        #print('text_logits shape:', text_logits.shape)
-
-        # Sqeuueze mask to remove th eextra dimension
-        #mask=mask.squeeze(1)
-        #print('mask shape:', mask.shape)
-
-        # Apply teacher forcing to text portion only 
-        #text_logits = text_logits[:, :-1].contiguous().view(-1, text_logits.size(-1))
-        #text_targets = target_ids[:, 1:].contiguous().view(-1)
-        #text_mask = mask[:, 1:].contiguous().view(-1)
-
-        #print('text_logits shape:', text_logits.shape)
-        #print('text_targets shape:', text_targets.shape)
-       
-        # Calculate loss only on masked positions
-        #text_mask = text_mask.bool()
-        #loss = criterion(
-        #    text_logits[text_mask],
-        #    text_targets[text_mask]
-        #)
-
-        # Backward pass and optimization
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-    
-        # Store the loss for this batch
-        epoch_losses.append(loss.item())
+    # Initialize wandb with custom run name
+    with wandb.init(config=config, name=run_name):
+        # If called by wandb agent, config will be set
+        config = wandb.config
         
-        # Update progress bar with current batch loss
-        train_pbar.set_postfix({
-            'batch_loss': f'{loss.item():.4f}'
-        })
-        train_pbar.update(1)
-
-    # Close progress bar for this epoch
-    train_pbar.close()
-    
-    # Print epoch summary
-    # Calculate and print training epoch average loss
-    avg_train_loss = sum(epoch_losses) / len(epoch_losses)
-    print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {avg_train_loss:.4f}")
-    print(" ")
-
-     # Validation phase
-    decoder.eval()  # Set model to evaluation mode
-    val_losses = []  # Store all validation losses
-    
-    with torch.no_grad():  # Disable gradient calculation for validation
-        val_pbar = tqdm(test_dataloader, desc=f'Epoch {epoch+1}/{num_epochs} [Val]', mininterval=0.1)
+        # Set device for remote GPU
+        if torch.cuda.is_available():
+            # Set the default CUDA device
+            torch.cuda.set_device(0)  # Use first GPU
+            device = torch.device("cuda:0")
+            print(f"Using GPU: {torch.cuda.get_device_name(0)}")
+        else:
+            device = torch.device("cpu")
+            print("Using CPU")
         
-        for batch_idx, (patch_embeddings, text_embeddings, target_ids, mask) in enumerate(val_pbar):
-
-            # Move everything to device
-            patch_embeddings = patch_embeddings.to(device)
-            text_embeddings = text_embeddings.to(device)
-            mask = mask.to(device)
-            targets = target_ids.to(device)
-            img_features = image_projection_layer(patch_embeddings)
-            text_features = text_projection_layer(text_embeddings)
-
-
-            # Forward pass through the decoder
-            logits = decoder(text_features, img_features)
-
-            # Compute loss
-            # Shift logits and targets to align for cross-entropy
-            logits = logits[:, :-1].contiguous().view(-1, logits.size(-1))
-            targets = target_ids[:, 1:].contiguous().view(-1)
-            val_loss = criterion(logits, targets)
-
-            # Calculate loss only on text portion
-            #text_logits = logits[:, -32:, :] # Shape: [batch_size, 32, vocab_size]
-            #print('text_logits shape:', text_logits.shape)
-
-            # Sqeuueze mask to remove th eextra dimension
-            #mask=mask.squeeze(1)
-            #print('mask shape:', mask.shape)
-
-            # Apply teacher forcing to text portion only 
-            #text_logits = text_logits[:, :-1].contiguous().view(-1, text_logits.size(-1))
-            #text_targets = target_ids[:, 1:].contiguous().view(-1)
-            #text_mask = mask[:, 1:].contiguous().view(-1)
-
-            #print('text_logits shape:', text_logits.shape)
-            #print('text_targets shape:', text_targets.shape)
+        # Load dataset and create train/test split
+        raw_dataset = load_dataset("nlphuji/flickr30k", split='test[:5000]')
+        train_test_split = raw_dataset.train_test_split(test_size=0.3)
         
-
-            # Calculate loss only on masked positions
-            #text_mask = text_mask.bool()
-            #val_loss = criterion(
-            #    text_logits[text_mask],
-            #    text_targets[text_mask]
-            #)
-
-            # Store validation loss
-            val_losses.append(val_loss.item())
+        # Create datasets
+        train_dataset = CaptionDataset(train_test_split['train'])
+        test_dataset = CaptionDataset(train_test_split['test'])
+        
+        # Create dataloaders with persistent workers
+        train_dataloader = DataLoader(
+            train_dataset, 
+            batch_size=config.batch_size, 
+            shuffle=True, 
+            num_workers=1,  # Reduced from 2 to 1
+            persistent_workers=False,  # Disabled persistent workers
+            pin_memory=True,  # Enable pin memory for faster CPU->GPU transfer
+            multiprocessing_context='spawn'  # Explicitly set spawn context
+        )
+        test_dataloader = DataLoader(
+            test_dataset, 
+            batch_size=config.batch_size, 
+            shuffle=False, 
+            num_workers=1,  # Reduced from 2 to 1
+            persistent_workers=False,  # Disabled persistent workers
+            pin_memory=True,  # Enable pin memory for faster CPU->GPU transfer
+            multiprocessing_context='spawn'  # Explicitly set spawn context
+        )
+        
+        # Initialize model
+        decoder = Decoder(
+            embedding_dim=config.embedding_dim,
+            num_heads=config.num_heads,
+            mlp_dimension=config.mlp_dimension,
+            num_layers=config.num_layers,
+            vocab_size=49408  # CLIP's vocab size
+        ).to(device)
+        
+        # Initialize optimizer and loss
+        optimizer = optim.Adam(decoder.parameters(), lr=config.learning_rate)
+        criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
+        
+        # Training loop
+        for epoch in range(config.epochs):
+            # Training phase
+            decoder.train()
+            train_losses = []
             
-            # Update progress bar with current validation loss
-            val_pbar.set_postfix({
-                'val_loss': f'{val_loss.item():.4f}'
+            train_pbar = tqdm(train_dataloader, desc=f'Epoch {epoch+1}/{config.epochs} [Train]', mininterval=2)
+            for batch_idx, (patch_embeddings, text_embeddings, target_ids, mask) in enumerate(train_pbar):
+                print(f"Processing batch {batch_idx}")  # Debug print
+                # Move to device
+                patch_embeddings = patch_embeddings.to(device)
+                text_embeddings = text_embeddings.to(device)
+                target_ids = target_ids.to(device)
+                mask = mask.to(device)
+                
+                # Forward pass
+                logits = decoder(text_embeddings, patch_embeddings)
+                
+                # Print shapes before reshaping
+                print(f"Before reshaping:")
+                print(f"logits shape: {logits.shape}")
+                print(f"target_ids shape: {target_ids.shape}")
+                
+                # Compute loss
+                logits = logits[:, :-1].contiguous().view(-1, logits.size(-1))
+                # Reshape target_ids to match logits
+                targets = target_ids.view(-1, target_ids.size(-1))[:, 1:].contiguous().view(-1)
+                
+                print(f"After reshaping:")
+                print(f"logits shape: {logits.shape}")
+                print(f"targets shape: {targets.shape}")
+                
+                loss = criterion(logits, targets)
+                
+                # Backward pass
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                
+                # Store loss
+                train_losses.append(loss.item())
+                
+                # Update progress bar
+                train_pbar.set_postfix({'loss': f'{loss.item():.4f}'})
+            
+            # Calculate average training loss
+            avg_train_loss = sum(train_losses) / len(train_losses)
+            
+            # Validation phase
+            decoder.eval()
+            val_losses = []
+            
+            with torch.no_grad():
+                val_pbar = tqdm(test_dataloader, desc=f'Epoch {epoch+1}/{config.epochs} [Val]', mininterval=2)
+                for batch_idx, (patch_embeddings, text_embeddings, target_ids, mask) in enumerate(val_pbar):
+                    # Move to device
+                    patch_embeddings = patch_embeddings.to(device)
+                    text_embeddings = text_embeddings.to(device)
+                    target_ids = target_ids.to(device)
+                    mask = mask.to(device)
+                    
+                    # Forward pass
+                    logits = decoder(text_embeddings, patch_embeddings)
+                    
+                    # Compute loss
+                    logits = logits[:, :-1].contiguous().view(-1, logits.size(-1))
+                    targets = target_ids.view(-1, target_ids.size(-1))[:, 1:].contiguous().view(-1)
+                    val_loss = criterion(logits, targets)
+                    
+                    # Store loss
+                    val_losses.append(val_loss.item())
+                    
+                    # Update progress bar
+                    val_pbar.set_postfix({'val_loss': f'{val_loss.item():.4f}'})
+            
+            # Calculate average validation loss
+            avg_val_loss = sum(val_losses) / len(val_losses)
+            
+            # Log to wandb
+            wandb.log({
+                "train_loss": avg_train_loss,
+                "val_loss": avg_val_loss,
+                "epoch": epoch
             })
-            val_pbar.update(1)
-    
-    # Close validation progress bar
-    val_pbar.close()
-    
-    # Calculate average validation loss
-    avg_val_loss = sum(val_losses) / len(val_losses)
-    
-    # Print epoch summary
-    print(f"Epoch {epoch+1}/{num_epochs} Val Loss: {avg_val_loss:.4f}")
-
+            
+            # Save model checkpoint with timestamp
+            if (epoch + 1) % config.save_interval == 0:
+                checkpoint = {
+                    'epoch': epoch,
+                    'model_state_dict': decoder.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'train_loss': avg_train_loss,
+                    'val_loss': avg_val_loss
+                }
+                checkpoint_name = f'checkpoint_{run_name}_epoch_{epoch+1}.pt'
+                torch.save(checkpoint, checkpoint_name)
+                wandb.save(checkpoint_name)
         
-print("Training complete.")
+        # Save final model with timestamp
+        final_model_name = f'model_{run_name}.pt'
+        torch.save(decoder.state_dict(), final_model_name)
+        wandb.save(final_model_name)
+
+if __name__ == "__main__":
+    # Test configuration
+    test_config = {
+        'batch_size': 2,
+        'learning_rate': 1e-4,
+        'embedding_dim': 256,
+        'num_heads': 8,
+        'mlp_dimension': 2048,
+        'num_layers': 4,
+        'epochs': 2,  # Just 2 epochs for testing
+        'save_interval': 1,
+        'run_number': 1
+    }
+    
+    # Run a single training run
+    print("Starting test training run...")
+    train(test_config)
+    print("Test training completed!")
+    
+    # Uncomment the following lines to run the full sweep
+    # sweep_config = {
+    #     'method': 'random',
+    #     'metric': {
+    #         'name': 'val_loss',
+    #         'goal': 'minimize'
+    #     },
+    #     'parameters': {
+    #         'batch_size': {
+    #             'values': [16, 32, 64]
+    #         },
+    #         'learning_rate': {
+    #             'distribution': 'log_uniform',
+    #             'min': -8,
+    #             'max': -4
+    #         },
+    #         'embedding_dim': {
+    #             'values': [256, 512]
+    #         },
+    #         'num_heads': {
+    #             'values': [8, 16]
+    #         },
+    #         'mlp_dimension': {
+    #             'values': [2048, 4096]
+    #         },
+    #         'num_layers': {
+    #             'values': [4, 6]
+    #         },
+    #         'epochs': {
+    #             'value': 20
+    #         },
+    #         'save_interval': {
+    #             'value': 5
+    #         },
+    #         'run_number': {
+    #             'value': 1
+    #         }
+    #     }
+    # }
+    # sweep_id = wandb.sweep(sweep_config, project="image-captioning")
+    # wandb.agent(sweep_id, function=train, count=10)
 
