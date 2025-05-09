@@ -1,14 +1,6 @@
-"""
-This script contains the implementation of the decoder class. It has:
-* Masked Attention Head
-* Multi-Head Attention with masking
-* Cross-Attention Head
-* Decoder Block
-"""
-import torch
 import torch.nn as nn
-
-
+import torch
+# Create Masked Self Attention Head
 class MaskedAttentionHead(nn.Module):
     def __init__(self, embedding_dim, head_dim):
         super(MaskedAttentionHead, self).__init__()
@@ -21,8 +13,10 @@ class MaskedAttentionHead(nn.Module):
 
         self.linear_projection = nn.Linear(head_dim, embedding_dim)
 
-    def forward(self, decoder_sequence):
+    def forward(self, decoder_sequence, input_sequence_length, padding_mask=None, ):
         # embedded decoder sequence shape: [batch_size, seq_length, embedding_dim]
+
+        #print('Decoder sequence shape:', decoder_sequence.shape)
 
         # Project to head dimension
         Q = self.weight_q(decoder_sequence)
@@ -30,90 +24,59 @@ class MaskedAttentionHead(nn.Module):
         V = self.weight_v(decoder_sequence)
 
         # Make the mask
-        seq_len = decoder_sequence.shape[1]
-        mask = torch.triu(torch.ones(seq_len, seq_len, device=decoder_sequence.device), diagonal=1)
-        mask = mask.masked_fill(mask==1, float('-inf'))
+        decoder_sequence_length = decoder_sequence.shape[1]
+        #mask = torch.triu(torch.ones(decoder_sequence_length, decoder_sequence_length, device=decoder_sequence.device), diagonal=1)
+        #print("Causal mask shape:", mask.shape)
+        #mask = mask.masked_fill(mask==1, float('-inf'))
+
+        mask = torch.zeros(decoder_sequence_length, decoder_sequence_length, device=decoder_sequence.device)
+        
+        # Only mask the text portion (after image patches)
+        num_image_patches = 49  # CLIP ViT-B/32 has 49 patches
+        text_start_idx = num_image_patches
+        
+        # Create causal mask for text portion only
+        text_mask = torch.triu(torch.ones(decoder_sequence_length - text_start_idx, decoder_sequence_length - text_start_idx, 
+                                        device=decoder_sequence.device), diagonal=1)
+        text_mask = text_mask.masked_fill(text_mask==1, float('-inf'))
+        
+        # Place the text mask in the bottom-right corner of the full mask
+        mask[text_start_idx:, text_start_idx:] = text_mask
+        
 
         # Calculate attention scores (scaled dot product)
         A = torch.einsum('bid,bjd->bij', Q, K)
         A = A / (self.head_dim ** 0.5) 
 
         A = A + mask
+
+        
+        # Apply padding mask if provided
+        #if padding_mask is not None:
+            #print('Padding mask shape:', padding_mask.shape)
+            # Convert padding mask to attention mask
+        #    padding_mask = padding_mask.expand(-1, A.size(1), -1)
+        #    A = A.masked_fill(padding_mask, float('-inf'))
+            
         # Apply softmax
         A = torch.softmax(A, dim=-1)
 
     
         #  Apply attention weights to values
         H = torch.einsum('bij,bjd->bid', A, V)
-        
-        # Add projection layer for output to return back to the original embedding dimension
-        #output = self.linear_projection(H)
 
         return H
-        
-        
-# Cross Attention Head is to attend to the encoder output AND decoder sequence 
-class CrossAttentionHead(nn.Module):
-    def __init__(self, embedding_dim, head_dim):
-        super(CrossAttentionHead, self).__init__()
-        self.head_dim = head_dim
-
-     # Linear projections for query, key, value
-     # The embedding dim for q and k will be taken from the encoder output
-     # And the embedding dim will be taken from the decoder sequence
-        self.weight_q = nn.Linear(embedding_dim, head_dim)
-        self.weight_k = nn.Linear(embedding_dim, head_dim)
-        self.weight_v = nn.Linear(embedding_dim, head_dim)
-
-    def forward(self, decoder_sequence, encoder_output):
-        # decoder sequence [batch_size, decoder_seq_length, embedding_dim]
-        # encoder output [batch_size, num_patches, embedding_dim]
-
-        # Q comes from the decoder sequence embeddings
-        Q = self.weight_q(decoder_sequence)
-
-        # K and V come from the encoder output
-        # The encoder output is a 16x64 (or whatever your num_patchs x output dimensions is)
-        # REMEMBER: Encoder output is the learned representation of the image
-        K = self.weight_k(encoder_output)
-        V = self.weight_v(encoder_output)
-
-        # Calculate attention scores for QK
-        A = torch.einsum('bid,bjd->bij', Q, K)
-        A = A / (self.head_dim ** 0.5)
-
-        # Apply softmax
-        A = torch.softmax(A, dim=-1)
-
-        # Apply attention weights to values
-        H = torch.einsum('bij,bjd->bid', A, V)
-
-        
-        return H
-        
-
-# Multihead attention to use with Cross Attention Head and/or Masked Attention Head
-# You need Multihead Attention instances because 1 is for the masked attention 
-# and 1 is for the cross attention
-
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, embedding_dim, num_heads, is_cross_attention=False):
+    def __init__(self, embedding_dim, num_heads):
         super(MultiHeadAttention, self).__init__()
         self.embedding_dim = embedding_dim
         self.num_heads = num_heads
         self.head_dim = embedding_dim // num_heads
-        self.is_cross_attention = is_cross_attention
 
      
-        # Create attention heads, separately for Cross and Masked Attention
-        if is_cross_attention:
-            self.heads = nn.ModuleList(
-                [CrossAttentionHead(embedding_dim, self.head_dim) for _ in range(num_heads)]
-            )
-        else:
-            self.heads = nn.ModuleList(
-                [MaskedAttentionHead(embedding_dim, self.head_dim) for _ in range(num_heads)]
+        self.heads = nn.ModuleList(
+            [MaskedAttentionHead(embedding_dim, self.head_dim) for _ in range(num_heads)]
             )
         
         # The output of the CrossAttention Head and MaskedAttentionHead still needs to be projected
@@ -121,9 +84,8 @@ class MultiHeadAttention(nn.Module):
         
         self.output_projection = nn.Linear(num_heads * self.head_dim, embedding_dim)
 
-        
 
-    def forward(self, decoder_sequence, encoder_output=None):
+    def forward(self, decoder_sequence, padding_mask=None):
         # decoder_sequence: [batch_size, seq_length, embedding_dim]
         # encoder_output: [batch_size, num_patches, embedding_dim] (only used in cross-attention)
         # mask: [batch_size, seq_length, seq_length] (only used in self-attention)
@@ -131,23 +93,18 @@ class MultiHeadAttention(nn.Module):
         # Process each head
         head_outputs = []
         for head in self.heads:
-            if self.is_cross_attention:
-                # For cross attention, we need both decoder sequence and encoder output
-                head_output = head(decoder_sequence, encoder_output)
-                print("\ncross attention head output shape: ", head_output.shape)
-            else:
                 # For masked self-attention, we only need decoder sequence and mask
-                head_output = head(decoder_sequence)
-                print("\nmasked attention head output shape: ", head_output.shape)
+                head_output = head(decoder_sequence, padding_mask)
+                #print("\nmasked attention head output shape: ", head_output.shape)
                 
-            head_outputs.append(head_output)
+                head_outputs.append(head_output)
 
         # Concatenate head outputs
         concat_heads = torch.cat(head_outputs, dim=-1)
         
         # Project back to embedding dimension
         output = self.output_projection(concat_heads)
-        print("Multihead attention output shape: ", output.shape)
+        #print("Multihead attention output shape: ", output.shape)
         
         return output
 
@@ -163,14 +120,9 @@ class DecoderBlock(nn.Module):
         # Masked multi-head attention for decoder sequence self-attention
         self.masked_mha = MultiHeadAttention(embedding_dim, num_heads)
         
-        # Second layer norm
-        self.ln2 = nn.LayerNorm(embedding_dim)
-        
-        # Cross attention between decoder sequence and encoded image
-        self.cross_mha = MultiHeadAttention(embedding_dim, num_heads, is_cross_attention=True)
         
         # Third layer norm
-        self.ln3 = nn.LayerNorm(embedding_dim)
+        self.ln2 = nn.LayerNorm(embedding_dim)
         
         # Feed forward network
         self.ffn = nn.Sequential(
@@ -179,7 +131,7 @@ class DecoderBlock(nn.Module):
             nn.Linear(mlp_dimension, embedding_dim)
         )
 
-    def forward(self, decoder_sequence, encoder_output):
+    def forward(self, decoder_sequence, padding_mask=None):
         # decoder_sequence: the input sequence to decode (e.g., [START, 1, 2, 3])
         # encoder_output: the encoded image from the encoder
         # mask: causal mask to prevent attending to future tokens
@@ -189,19 +141,13 @@ class DecoderBlock(nn.Module):
         # First masked self-attention
         residual = decoder_sequence
         decoder_sequence = self.ln1(decoder_sequence)
-        decoder_sequence = self.masked_mha(decoder_sequence)
+        decoder_sequence = self.masked_mha(decoder_sequence, padding_mask)
         decoder_sequence = residual + decoder_sequence
-        
-        # Cross attention block with residual connection
-        # This allows decoder sequence to attend to the encoded image
-        residual = decoder_sequence
-        decoder_sequence = self.ln2(decoder_sequence)
-        decoder_sequence = self.cross_mha(decoder_sequence, encoder_output)
-        decoder_sequence = residual + decoder_sequence
+
         
         # # FFN block with residual connection
         residual = decoder_sequence
-        decoder_sequence = self.ln3(decoder_sequence)
+        decoder_sequence = self.ln2(decoder_sequence)
         decoder_sequence = self.ffn(decoder_sequence)
         decoder_sequence = residual + decoder_sequence
         
@@ -209,16 +155,16 @@ class DecoderBlock(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, embedding_dim, num_heads, mlp_dimension, num_layers, input_sequence_length, vocab_size):
+    def __init__(self, embedding_dim, num_heads, mlp_dimension, num_layers, vocab_size):
         super(Decoder, self).__init__()
         
         self.embedding_layer = nn.Embedding(vocab_size, embedding_dim)
     
         # Create positional embeddings for decoder sequence ONCE during initialization
-        self.positional_embeddings = nn.Parameter(
-            torch.randn(1, input_sequence_length, embedding_dim),
-            requires_grad=True
-        )
+        #self.positional_embeddings = nn.Parameter(
+        #    torch.randn(1, 1, embedding_dim), # 81 because its 32 caption len + 49 patches
+        #    requires_grad=True
+       # )
         
         # Create decoder blocks
         self.decoder_blocks = nn.ModuleList([
@@ -230,39 +176,40 @@ class Decoder(nn.Module):
         self.final_ln = nn.LayerNorm(embedding_dim)
 
         # Output projection to vocabulary size
-        # This converts decoder features to logits over possible next tokens
+        # This converts decoder features to logits over possible next tokensß
         self.output_projection = nn.Linear(embedding_dim, vocab_size)
 
-    def forward(self, decoder_sequence, encoder_output, return_logits=True):
-        # decoder_sequence: the input sequence to decode (e.g., [START, 1, 2, 3])
-        # encoder_output: the encoded image from the encoder
+    def forward(self, text_embeddings, img_features, padding_mask=None, return_logits=True):
         # return_logits: whether to return prediction logits or just decoder features
         # by default, we return logits
 
-        embedded_decoder_sequence = self.embedding_layer(decoder_sequence)
-
         # Add positional embeddings to decoder sequence
-        decoder_sequence = embedded_decoder_sequence + self.positional_embeddings
+        #decoder_sequence = embedded_decoder_sequence + self.positional_embeddings
         
+        # Concatenate image features and text embeddings
+        decoder_inputs = torch.cat([img_features, text_embeddings], dim=1).to(device)
+        #print('Decoder inputs shape:', decoder_inputs.shape)
+        
+        # Add new positional embeddings
+        #decoder_inputs = decoder_inputs + self.positional_embeddings
+
         # Pass through decoder blocks
         for block in self.decoder_blocks:
-            decoder_sequence = block(decoder_sequence, encoder_output)
+            decoder_inputs = block(decoder_inputs, padding_mask)
         
         # Apply final layer norm
-        decoder_features = self.final_ln(decoder_sequence)
+        decoder_features = self.final_ln(decoder_inputs)
+
+        # Get text hidden states only
+        text_hidden = decoder_features[:, -32:, :]
         
         if return_logits:
             # Convert features to logits for prediction
             # Shape: [batch_size, seq_length, vocab_size]
-            logits = self.output_projection(decoder_features)
+            logits = self.output_projection(text_hidden)
             return logits
         else:
             # Return decoder features if needed
-            return decoder_features
+            return text_hidden
+        
 
-if __name__ == "__main__":
-    print('MaskedAttentionHead called successfully')
-    print('CrossAttentionHead called successfully')
-    print('MultiHeadAttention called successfully')
-    print('DecoderBlock called successfully')
-    print('Decoder called successfully') 
