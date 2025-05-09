@@ -57,19 +57,19 @@ def train(config=None):
             train_dataset, 
             batch_size=config.batch_size, 
             shuffle=True, 
-            num_workers=1,  # Reduced from 2 to 1
-            persistent_workers=False,  # Disabled persistent workers
-            pin_memory=True,  # Enable pin memory for faster CPU->GPU transfer
-            multiprocessing_context='spawn'  # Explicitly set spawn context
+            num_workers=4,  # Increased workers
+            persistent_workers=True,  # Enable persistent workers
+            pin_memory=True,
+            multiprocessing_context='spawn'
         )
         test_dataloader = DataLoader(
             test_dataset, 
             batch_size=config.batch_size, 
             shuffle=False, 
-            num_workers=1,  # Reduced from 2 to 1
-            persistent_workers=False,  # Disabled persistent workers
-            pin_memory=True,  # Enable pin memory for faster CPU->GPU transfer
-            multiprocessing_context='spawn'  # Explicitly set spawn context
+            num_workers=4,  # Increased workers
+            persistent_workers=True,  # Enable persistent workers
+            pin_memory=True,
+            multiprocessing_context='spawn'
         )
         
         # Initialize model
@@ -90,6 +90,7 @@ def train(config=None):
             # Training phase
             decoder.train()
             train_losses = []
+            optimizer.zero_grad()  # Zero gradients at start of epoch
             
             train_pbar = tqdm(train_dataloader, desc=f'Epoch {epoch+1}/{config.num_epochs} [Train]', mininterval=2)
             for batch_idx, (patch_embeddings, text_embeddings, target_ids, mask) in enumerate(train_pbar):
@@ -107,16 +108,22 @@ def train(config=None):
                 targets = target_ids.view(-1, target_ids.size(-1))[:, 1:].contiguous().view(-1)
                 loss = criterion(logits, targets)
                 
-                # Backward pass
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+                # Scale loss by gradient accumulation steps
+                loss = loss / config.gradient_accumulation_steps
                 
-                # Store loss
-                train_losses.append(loss.item())
+                # Backward pass
+                loss.backward()
+                
+                # Update weights if we've accumulated enough gradients
+                if (batch_idx + 1) % config.gradient_accumulation_steps == 0:
+                    optimizer.step()
+                    optimizer.zero_grad()
+                
+                # Store loss (multiply by gradient_accumulation_steps to get true loss)
+                train_losses.append(loss.item() * config.gradient_accumulation_steps)
                 
                 # Update progress bar
-                train_pbar.set_postfix({'loss': f'{loss.item():.4f}'})
+                train_pbar.set_postfix({'loss': f'{loss.item() * config.gradient_accumulation_steps:.4f}'})
             
             # Calculate average training loss
             avg_train_loss = sum(train_losses) / len(train_losses)
@@ -191,7 +198,7 @@ if __name__ == "__main__":
                 'max': 1e-3
             },
             'batch_size': {
-                'values': [32, 64]
+                'values': [128, 256]  # Increased batch sizes
             },
             'num_epochs': {
                 'values': [10, 15, 20]
@@ -210,6 +217,9 @@ if __name__ == "__main__":
             },
             'save_interval': {
                 'value': 5
+            },
+            'gradient_accumulation_steps': {
+                'value': 4  # Accumulate gradients for 4 steps
             }
         }
     }
