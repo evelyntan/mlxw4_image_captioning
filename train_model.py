@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, random_split
 from datasets import load_dataset
-from load_data import CaptionDataset
+from load_data_optim import CaptionDataset, collate_fn
 import wandb
 from datetime import datetime
 import multiprocessing
@@ -59,7 +59,8 @@ def train(config=None):
             shuffle=True, 
             num_workers=4,  # Increased workers
             pin_memory=True,
-            multiprocessing_context='spawn'
+            multiprocessing_context='spawn', 
+            collate_fn=collate_fn
         )
         test_dataloader = DataLoader(
             test_dataset, 
@@ -67,7 +68,8 @@ def train(config=None):
             shuffle=False, 
             num_workers=4,  # Increased workers
             pin_memory=True,
-            multiprocessing_context='spawn'
+            multiprocessing_context='spawn',
+            collate_fn=collate_fn
         )
         
         # Initialize model

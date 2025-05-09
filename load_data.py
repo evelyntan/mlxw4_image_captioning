@@ -87,6 +87,8 @@ class CaptionDataset(Dataset):
         #print(f"masks: {masks.shape}")
         
         return patch_embeddings, text_embeddings, target_ids, masks
+    
+
             
 
 if __name__ == "__main__":

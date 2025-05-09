@@ -205,7 +205,7 @@ class Decoder(nn.Module):
         #print(f"Image features shape: {img_features.shape}")
         #print(f"Text embeddings shape: {text_embeddings.shape}")
 
-            # Reshape padding mask if provided
+        # Reshape padding mask if provided
         if padding_mask is not None:
             # Create a mask for image patches (all False since we want to attend to all patches)
             img_mask = torch.zeros(batch_size * num_captions, 49, dtype=torch.bool, device=padding_mask.device)
