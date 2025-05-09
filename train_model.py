@@ -104,18 +104,18 @@ def train(config=None):
                 logits = decoder(text_embeddings, patch_embeddings)
                 
                 # Print shapes before reshaping
-                print(f"Before reshaping:")
-                print(f"logits shape: {logits.shape}")
-                print(f"target_ids shape: {target_ids.shape}")
+                #print(f"Before reshaping:")
+                #print(f"logits shape: {logits.shape}")
+                #print(f"target_ids shape: {target_ids.shape}")
                 
                 # Compute loss
                 logits = logits[:, :-1].contiguous().view(-1, logits.size(-1))
                 # Reshape target_ids to match logits
                 targets = target_ids.view(-1, target_ids.size(-1))[:, 1:].contiguous().view(-1)
                 
-                print(f"After reshaping:")
-                print(f"logits shape: {logits.shape}")
-                print(f"targets shape: {targets.shape}")
+                #print(f"After reshaping:")
+                #print(f"logits shape: {logits.shape}")
+                #print(f"targets shape: {targets.shape}")
                 
                 loss = criterion(logits, targets)
                 

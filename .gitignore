@@ -7,11 +7,15 @@ ENV/
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
 
 # Distribution / packaging
 dist/
 build/
 *.egg-info/
+.installed.cfg
+*.egg
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -34,4 +38,35 @@ build/
 
 # OS specific files
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# Weights & Biases
+wandb/
+wandb-*/
+.wandb/
+wandb-*.log
+wandb-*.yaml
+wandb-*.json
+wandb-*.txt
+wandb-*.csv
+wandb-*.pt
+wandb-*.pth
+wandb-*.h5
+wandb-*.ckpt
+wandb-*.tar
+wandb-*.zip
+wandb-*.gz
+wandb-*.tar.gz
+wandb-*.tar.bz2
+wandb-*.tar.xz
+wandb-*.tar.lzma
+wandb-*.tar.lz
+wandb-*.tar.lzo
+wandb-*.tar.lzop
+wandb-*.tar.lz4
+wandb-*.tar.zst
+wandb-*.tar.zstd
+
+# Keep trained models
+!model_*.pt
+!checkpoint_*.pt 
