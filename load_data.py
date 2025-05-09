@@ -1,24 +1,16 @@
 # Import necessary libraries
 from datasets import load_dataset
 from transformers import CLIPProcessor, CLIPTokenizer, CLIPModel
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 import torch
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Initialize CLIP processor and tokenizer
-processor = CLIPProcessor.from_pretrained('openai/clip-vit-base-patch32')
-tokenizer = CLIPTokenizer.from_pretrained('openai/clip-vit-base-patch32')
-clip_model = CLIPModel.from_pretrained('openai/clip-vit-base-patch32')
-
-# Load the dataset from Hugging Face
-raw_dataset = load_dataset("nlphuji/flickr30k", split="test[:5000]", )
-
-# Split the dataset into training and testing sets
-train_test_split = raw_dataset.train_test_split(test_size=0.3)
+# load dataset and create train and test sets
+raw_dataset = load_dataset("nlphuji/flickr30k", split='test[:5000]')
+train_test_split = raw_dataset.train_test_split(test_size=0.3, seed=42)
 train = train_test_split['train']
 test = train_test_split['test']
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class CaptionDataset(Dataset):
     def __init__(self, dataset, clip_model_name="openai/clip-vit-base-patch32", device=device):
@@ -40,41 +32,58 @@ class CaptionDataset(Dataset):
         
         # ---- Encode image with CLIP ----
         img_tensor = self.processor(images=image, return_tensors="pt").to(self.device)
-        #print('IMG TENSOR SHAPE', img_tensor.shape) # channels, height, width
         
-        # ---- Tokenize input caption ----
-        caption = caption_list[0] # get the first caption in the list
-        print('caption len:', len(caption))
-        print('caption:', caption)
-        tokens = self.tokenizer(caption, padding="max_length", max_length=18, return_tensors="pt", truncation=True)
-
-        input_ids_full = tokens["input_ids"].to(self.device)  # [1, seq_len]
-        #print('text_input_ids_full shape:', input_ids_full.shape)
-        mask = tokens["attention_mask"].to(self.device) # get the mask out
-
+        # Get first 3 captions (or fewer if not available)
+        num_captions = min(3, len(caption_list))
+        captions = caption_list[:num_captions]
+        
+        # Process each caption
+        all_text_embeddings = []
+        all_target_ids = []
+        all_masks = []
+        
         with torch.no_grad():
-            # Use only embedding layer from CLIP
-            text_embeddings = self.clip_model.text_model.embeddings(input_ids_full).squeeze(0).to(self.device)
-
-            # Get the CLIP encoded image embeddings
-            patch_embeddings = self.clip_model.vision_model(**img_tensor).last_hidden_state[:, 1:, :].squeeze(0).to(self.device) # shape: [1, num_patches, hidden_dim]
-            #print('Patch embeddings shape:', patch_embeddings.shape)           
+            # Get image embeddings once
+            patch_embeddings = self.clip_model.vision_model(**img_tensor).last_hidden_state[:, 1:, :].squeeze(0).to(self.device)
             
-            
-        target_ids = input_ids_full.squeeze(0).to(self.device)
-
+            # Process each caption
+            for caption in captions:
+                # Tokenize caption
+                tokens = self.tokenizer(caption, padding="max_length", max_length=18, return_tensors="pt", truncation=True)
+                input_ids_full = tokens["input_ids"].to(self.device)
+                mask = tokens["attention_mask"].to(self.device)
+                
+                # Get text embeddings
+                text_embeddings = self.clip_model.text_model.embeddings(input_ids_full).squeeze(0).to(self.device)
+                
+                all_text_embeddings.append(text_embeddings)
+                all_target_ids.append(input_ids_full.squeeze(0))
+                all_masks.append(mask)
+        
+        # Stack all embeddings and targets
+        text_embeddings = torch.stack(all_text_embeddings)
+        target_ids = torch.stack(all_target_ids)
+        masks = torch.stack(all_masks)
+        
+        # Duplicate image embeddings to match number of captions
+        patch_embeddings = patch_embeddings.unsqueeze(0).repeat(num_captions, 1, 1)
+        
         print('IMG EMBEDDINGS SHAPE', patch_embeddings.shape)
         print('TEXT EMBEDDINGS SHAPE', text_embeddings.shape)
         print('TARGET IDS SHAPE', target_ids.shape)
-        print('MASK SHAPE', mask.shape)
-
-        return patch_embeddings, text_embeddings, target_ids, mask
+        print('MASK SHAPE', masks.shape)
+        
+        return patch_embeddings, text_embeddings, target_ids, masks
             
 
 if __name__ == "__main__":
-    # Process a single example from the test set
-    test_caption = CaptionDataset(test)
-    example = test_caption[0]
+    # Create datasets
+    train_dataset = CaptionDataset(train)
+    test_dataset = CaptionDataset(test)
+    
+    # Test a single example
+    example = train_dataset[0]
+    patch_embeddings, text_embeddings, target_ids, masks = example
     
     print("\nProcessing completed successfully!")
-
+    
