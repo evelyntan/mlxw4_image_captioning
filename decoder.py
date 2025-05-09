@@ -189,10 +189,12 @@ class Decoder(nn.Module):
         #print(f"Image features shape: {img_features.shape}")
         #print(f"Text embeddings shape: {text_embeddings.shape}")
 
-        # Reshape to combine batch and caption dimensions
-        batch_size, num_captions = img_features.shape[:2]
-        img_features = img_features.view(batch_size * num_captions, 49, 256)  # [batch*num_captions, num_patches, embedding_dim]
-        text_embeddings = text_embeddings.view(batch_size * num_captions, 18, 256)  # [batch*num_captions, seq_len, embedding_dim]
+        # Reshape tensors to combine batch and caption dimensions
+        batch_size = img_features.size(0)
+        num_captions = text_embeddings.size(0) // batch_size
+        
+        img_features = img_features.view(batch_size * num_captions, 49, self.embedding_dim)  # [batch*num_captions, num_patches, embedding_dim]
+        text_embeddings = text_embeddings.view(batch_size * num_captions, -1, self.embedding_dim)  # [batch*num_captions, seq_len, embedding_dim]
         #print(f"Reshaped image features: {img_features.shape}")
         #print(f"Reshaped text embeddings: {text_embeddings.shape}")
 

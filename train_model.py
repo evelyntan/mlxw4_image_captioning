@@ -86,14 +86,13 @@ def train(config=None):
         criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
         
         # Training loop
-        for epoch in range(config.epochs):
+        for epoch in range(config.num_epochs):
             # Training phase
             decoder.train()
             train_losses = []
             
-            train_pbar = tqdm(train_dataloader, desc=f'Epoch {epoch+1}/{config.epochs} [Train]', mininterval=2)
+            train_pbar = tqdm(train_dataloader, desc=f'Epoch {epoch+1}/{config.num_epochs} [Train]', mininterval=2)
             for batch_idx, (patch_embeddings, text_embeddings, target_ids, mask) in enumerate(train_pbar):
-                print(f"Processing batch {batch_idx}")  # Debug print
                 # Move to device
                 patch_embeddings = patch_embeddings.to(device)
                 text_embeddings = text_embeddings.to(device)
@@ -138,7 +137,7 @@ def train(config=None):
             val_losses = []
             
             with torch.no_grad():
-                val_pbar = tqdm(test_dataloader, desc=f'Epoch {epoch+1}/{config.epochs} [Val]', mininterval=2)
+                val_pbar = tqdm(test_dataloader, desc=f'Epoch {epoch+1}/{config.num_epochs} [Val]', mininterval=2)
                 for batch_idx, (patch_embeddings, text_embeddings, target_ids, mask) in enumerate(val_pbar):
                     # Move to device
                     patch_embeddings = patch_embeddings.to(device)
@@ -190,62 +189,61 @@ def train(config=None):
 
 if __name__ == "__main__":
     # Test configuration
-    test_config = {
-        'batch_size': 2,
-        'learning_rate': 1e-4,
-        'embedding_dim': 256,
-        'num_heads': 8,
-        'mlp_dimension': 2048,
-        'num_layers': 4,
-        'epochs': 2,  # Just 2 epochs for testing
-        'save_interval': 1,
-        'run_number': 1
-    }
+    #test_config = {
+    #    'batch_size': 2,
+    #    'learning_rate': 1e-4,
+    #    'embedding_dim': 256,
+    #    'num_heads': 8,
+    #    'mlp_dimension': 2048,
+    #    'num_layers': 4,
+     #   'epochs': 2,  # Just 2 epochs for testing
+      #  'save_interval': 1,
+       # 'run_number': 1
+    #}
     
     # Run a single training run
     print("Starting test training run...")
-    train(test_config)
-    print("Test training completed!")
     
     # Uncomment the following lines to run the full sweep
-    # sweep_config = {
-    #     'method': 'random',
-    #     'metric': {
-    #         'name': 'val_loss',
-    #         'goal': 'minimize'
-    #     },
-    #     'parameters': {
-    #         'batch_size': {
-    #             'values': [16, 32, 64]
-    #         },
-    #         'learning_rate': {
-    #             'distribution': 'log_uniform',
-    #             'min': -8,
-    #             'max': -4
-    #         },
-    #         'embedding_dim': {
-    #             'values': [256, 512]
-    #         },
-    #         'num_heads': {
-    #             'values': [8, 16]
-    #         },
-    #         'mlp_dimension': {
-    #             'values': [2048, 4096]
-    #         },
-    #         'num_layers': {
-    #             'values': [4, 6]
-    #         },
-    #         'epochs': {
-    #             'value': 20
-    #         },
-    #         'save_interval': {
-    #             'value': 5
-    #         },
-    #         'run_number': {
-    #             'value': 1
-    #         }
-    #     }
-    # }
-    # sweep_id = wandb.sweep(sweep_config, project="image-captioning")
-    # wandb.agent(sweep_id, function=train, count=10)
+    sweep_config = {
+        'method': 'random',
+        'metric': {
+            'name': 'loss',
+            'goal': 'minimize'
+        },
+        'parameters': {
+            'learning_rate': {
+                'distribution': 'log_uniform_values',
+                'min': 1e-5,
+                'max': 1e-3
+            },
+            'batch_size': {
+                'values': [32, 64]
+            },
+            'num_epochs': {
+                'values': [10, 15, 20]
+            },
+            'embedding_dim': {
+                'values': [256, 512]
+            },
+            'num_heads': {
+                'values': [8, 16]
+            },
+            'mlp_dimension': {
+                'values': [2048]
+            },
+            'num_layers': {
+                'values': [4, 6]
+            },
+            'save_interval': {
+                'value': 5
+            }
+        }
+    }
+    sweep_id = wandb.sweep(sweep_config, project="image-captioning")
+    wandb.agent(sweep_id, function=train, count=10)
+
+    # Run training
+    train(sweep_config)
+    print("Test training completed!")
 
