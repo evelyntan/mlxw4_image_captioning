@@ -58,7 +58,6 @@ def train(config=None):
             batch_size=config.batch_size, 
             shuffle=True, 
             num_workers=4,  # Increased workers
-            persistent_workers=True,  # Enable persistent workers
             pin_memory=True,
             multiprocessing_context='spawn'
         )
@@ -67,7 +66,6 @@ def train(config=None):
             batch_size=config.batch_size, 
             shuffle=False, 
             num_workers=4,  # Increased workers
-            persistent_workers=True,  # Enable persistent workers
             pin_memory=True,
             multiprocessing_context='spawn'
         )
@@ -92,7 +90,7 @@ def train(config=None):
             train_losses = []
             optimizer.zero_grad()  # Zero gradients at start of epoch
             
-            train_pbar = tqdm(train_dataloader, desc=f'Epoch {epoch+1}/{config.num_epochs} [Train]', mininterval=2)
+            train_pbar = tqdm(train_dataloader, desc=f'Epoch {epoch+1}/{config.num_epochs} [Train]', mininterval=0.5)
             for batch_idx, (patch_embeddings, text_embeddings, target_ids, mask) in enumerate(train_pbar):
                 # Move to device
                 patch_embeddings = patch_embeddings.to(device)
@@ -133,7 +131,7 @@ def train(config=None):
             val_losses = []
             
             with torch.no_grad():
-                val_pbar = tqdm(test_dataloader, desc=f'Epoch {epoch+1}/{config.num_epochs} [Val]', mininterval=2)
+                val_pbar = tqdm(test_dataloader, desc=f'Epoch {epoch+1}/{config.num_epochs} [Val]', mininterval=0.5)
                 for batch_idx, (patch_embeddings, text_embeddings, target_ids, mask) in enumerate(val_pbar):
                     # Move to device
                     patch_embeddings = patch_embeddings.to(device)
@@ -198,7 +196,7 @@ if __name__ == "__main__":
                 'max': 1e-3
             },
             'batch_size': {
-                'values': [128, 256]  # Increased batch sizes
+                'values': [16, 32]  # Reduced batch sizes
             },
             'num_epochs': {
                 'values': [10, 15, 20]
@@ -207,7 +205,7 @@ if __name__ == "__main__":
                 'values': [256, 512]
             },
             'num_heads': {
-                'values': [8, 16]
+                'values': [4, 8]
             },
             'mlp_dimension': {
                 'value': 2048
@@ -219,7 +217,7 @@ if __name__ == "__main__":
                 'value': 5
             },
             'gradient_accumulation_steps': {
-                'value': 4  # Accumulate gradients for 4 steps
+                'value': 8  # Increased to compensate for smaller batch size
             }
         }
     }

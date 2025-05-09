@@ -52,11 +52,11 @@ class MaskedAttentionHead(nn.Module):
 
         
         # Apply padding mask if provided
-        #if padding_mask is not None:
+        if padding_mask is not None:
             #print('Padding mask shape:', padding_mask.shape)
             # Convert padding mask to attention mask
-        #    padding_mask = padding_mask.expand(-1, A.size(1), -1)
-        #    A = A.masked_fill(padding_mask, float('-inf'))
+            padding_mask = padding_mask.expand(-1, A.size(1), -1)
+            A = A.masked_fill(padding_mask, float('-inf'))
             
         # Apply softmax
         A = torch.softmax(A, dim=-1)
@@ -204,6 +204,15 @@ class Decoder(nn.Module):
         #print(f"After reshaping:")
         #print(f"Image features shape: {img_features.shape}")
         #print(f"Text embeddings shape: {text_embeddings.shape}")
+
+            # Reshape padding mask if provided
+        if padding_mask is not None:
+            # Create a mask for image patches (all False since we want to attend to all patches)
+            img_mask = torch.zeros(batch_size * num_captions, 49, dtype=torch.bool, device=padding_mask.device)
+            # Reshape text padding mask
+            text_mask = padding_mask.reshape(batch_size * num_captions, -1)
+            # Concatenate masks
+            padding_mask = torch.cat([img_mask, text_mask], dim=1)
 
         # Concatenate image features and text embeddings
         decoder_inputs = torch.cat([img_features, text_embeddings], dim=1)  # [batch*num_captions, num_patches+seq_len, embedding_dim]
