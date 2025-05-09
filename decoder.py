@@ -158,6 +158,9 @@ class Decoder(nn.Module):
     def __init__(self, embedding_dim, num_heads, mlp_dimension, num_layers, vocab_size):
         super(Decoder, self).__init__()
         
+        # Store embedding dimension
+        self.embedding_dim = embedding_dim
+        
         # Projection layers for image and text features
         self.image_projection = nn.Linear(768, embedding_dim)  # CLIP image features are 768-dim
         self.text_projection = nn.Linear(512, embedding_dim)   # CLIP text features are 512-dim
@@ -186,21 +189,25 @@ class Decoder(nn.Module):
         # Project image and text features to same dimension
         img_features = self.image_projection(img_features)  # [batch, num_captions, num_patches, embedding_dim]
         text_embeddings = self.text_projection(text_embeddings)  # [batch, num_captions, seq_len, embedding_dim]
+        #print(f"After projection:")
         #print(f"Image features shape: {img_features.shape}")
         #print(f"Text embeddings shape: {text_embeddings.shape}")
 
         # Reshape tensors to combine batch and caption dimensions
         batch_size = img_features.size(0)
-        num_captions = text_embeddings.size(0) // batch_size
+        num_captions = img_features.size(1)
+        #print(f"batch_size: {batch_size}, num_captions: {num_captions}")
         
-        img_features = img_features.view(batch_size * num_captions, 49, self.embedding_dim)  # [batch*num_captions, num_patches, embedding_dim]
-        text_embeddings = text_embeddings.view(batch_size * num_captions, -1, self.embedding_dim)  # [batch*num_captions, seq_len, embedding_dim]
-        #print(f"Reshaped image features: {img_features.shape}")
-        #print(f"Reshaped text embeddings: {text_embeddings.shape}")
+        # Reshape image features: [batch, num_captions, num_patches, embedding_dim] -> [batch*num_captions, num_patches, embedding_dim]
+        img_features = img_features.reshape(batch_size * num_captions, 49, self.embedding_dim)
+        text_embeddings = text_embeddings.reshape(batch_size * num_captions, 18, self.embedding_dim)
+        #print(f"After reshaping:")
+        #print(f"Image features shape: {img_features.shape}")
+        #print(f"Text embeddings shape: {text_embeddings.shape}")
 
         # Concatenate image features and text embeddings
         decoder_inputs = torch.cat([img_features, text_embeddings], dim=1)  # [batch*num_captions, num_patches+seq_len, embedding_dim]
-        #print(f"Decoder inputs shape: {decoder_inputs.shape}") # we would expect [6, 67, 256]
+        #print(f"Decoder inputs shape: {decoder_inputs.shape}")
         
         # Pass through decoder blocks
         for block in self.decoder_blocks:

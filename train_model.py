@@ -102,20 +102,9 @@ def train(config=None):
                 # Forward pass
                 logits = decoder(text_embeddings, patch_embeddings)
                 
-                # Print shapes before reshaping
-                #print(f"Before reshaping:")
-                #print(f"logits shape: {logits.shape}")
-                #print(f"target_ids shape: {target_ids.shape}")
-                
                 # Compute loss
                 logits = logits[:, :-1].contiguous().view(-1, logits.size(-1))
-                # Reshape target_ids to match logits
                 targets = target_ids.view(-1, target_ids.size(-1))[:, 1:].contiguous().view(-1)
-                
-                #print(f"After reshaping:")
-                #print(f"logits shape: {logits.shape}")
-                #print(f"targets shape: {targets.shape}")
-                
                 loss = criterion(logits, targets)
                 
                 # Backward pass
@@ -188,23 +177,7 @@ def train(config=None):
         wandb.save(final_model_name)
 
 if __name__ == "__main__":
-    # Test configuration
-    #test_config = {
-    #    'batch_size': 2,
-    #    'learning_rate': 1e-4,
-    #    'embedding_dim': 256,
-    #    'num_heads': 8,
-    #    'mlp_dimension': 2048,
-    #    'num_layers': 4,
-     #   'epochs': 2,  # Just 2 epochs for testing
-      #  'save_interval': 1,
-       # 'run_number': 1
-    #}
-    
-    # Run a single training run
-    print("Starting test training run...")
-    
-    # Uncomment the following lines to run the full sweep
+    # Initialize sweep
     sweep_config = {
         'method': 'random',
         'metric': {
@@ -230,7 +203,7 @@ if __name__ == "__main__":
                 'values': [8, 16]
             },
             'mlp_dimension': {
-                'values': [2048]
+                'value': 2048
             },
             'num_layers': {
                 'values': [4, 6]
@@ -240,10 +213,11 @@ if __name__ == "__main__":
             }
         }
     }
+    
+    # Initialize sweep
     sweep_id = wandb.sweep(sweep_config, project="image-captioning")
+    
+    # Run the sweep
     wandb.agent(sweep_id, function=train, count=10)
-
-    # Run training
-    train(sweep_config)
-    print("Test training completed!")
+    print("Sweep completed!")
 
