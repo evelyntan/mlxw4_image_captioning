@@ -158,13 +158,17 @@ class Decoder(nn.Module):
     def __init__(self, embedding_dim, num_heads, mlp_dimension, num_layers, vocab_size):
         super(Decoder, self).__init__()
         
+        # Projection layers for image and text features
+        self.image_projection = nn.Linear(768, embedding_dim)  # CLIP image features are 768-dim
+        self.text_projection = nn.Linear(512, embedding_dim)   # CLIP text features are 512-dim
+        
         self.embedding_layer = nn.Embedding(vocab_size, embedding_dim)
-    
-        # Create positional embeddings for decoder sequence ONCE during initialization
-        #self.positional_embeddings = nn.Parameter(
-        #    torch.randn(1, 1, embedding_dim), # 81 because its 32 caption len + 49 patches
-        #    requires_grad=True
-       # )
+        
+        # Create positional embeddings - single embedding that will be added to each position
+        self.positional_embeddings = nn.Parameter(
+            torch.randn(1, 1, embedding_dim),
+            requires_grad=True
+        )
         
         # Create decoder blocks
         self.decoder_blocks = nn.ModuleList([
@@ -176,19 +180,15 @@ class Decoder(nn.Module):
         self.final_ln = nn.LayerNorm(embedding_dim)
 
         # Output projection to vocabulary size
-        # This converts decoder features to logits over possible next tokensß
         self.output_projection = nn.Linear(embedding_dim, vocab_size)
 
     def forward(self, text_embeddings, img_features, padding_mask=None, return_logits=True):
-        # return_logits: whether to return prediction logits or just decoder features
-        # by default, we return logits
-
-        # Add positional embeddings to decoder sequence
-        #decoder_sequence = embedded_decoder_sequence + self.positional_embeddings
+        # Project image and text features to same dimension
+        img_features = self.image_projection(img_features)  # [batch, num_patches, embedding_dim]
+        text_embeddings = self.text_projection(text_embeddings)  # [batch, seq_len, embedding_dim]
         
         # Concatenate image features and text embeddings
-        decoder_inputs = torch.cat([img_features, text_embeddings], dim=1).to(device)
-        #print('Decoder inputs shape:', decoder_inputs.shape)
+        decoder_inputs = torch.cat([img_features, text_embeddings], dim=1)
         
         # Add new positional embeddings
         #decoder_inputs = decoder_inputs + self.positional_embeddings
@@ -211,5 +211,43 @@ class Decoder(nn.Module):
         else:
             # Return decoder features if needed
             return text_hidden
+        
+
+if __name__ == "__main__":
+    # Test parameters for sanity checking 
+    embedding_dim = 256
+    num_heads = 8
+    mlp_dimension = 2048
+    num_layers = 4
+    vocab_size = 49408  # CLIP's vocab size
+    
+    # Create decoder
+    decoder = Decoder(
+        embedding_dim=embedding_dim,
+        num_heads=num_heads,
+        mlp_dimension=mlp_dimension,
+        num_layers=num_layers,
+        vocab_size=vocab_size
+    )
+    
+    # Create sample inputs
+    batch_size = 2
+    num_captions = 3
+    # Create inputs with correct dimensions for concatenation
+    img_features = torch.randn(batch_size, num_captions, 49, 768)  # [batch, num_captions, num_patches, hidden_dim]
+    text_embeddings = torch.randn(batch_size, num_captions, 18, 512)  # [batch, num_captions, seq_len, hidden_dim]
+    
+    # Reshape by flattening for concatenation
+    img_features = img_features.view(batch_size * num_captions, 49, 768)  # [batch*num_captions, num_patches, hidden_dim]
+    text_embeddings = text_embeddings.view(batch_size * num_captions, 18, 512)  # [batch*num_captions, seq_len, hidden_dim]
+    
+    # Test forward pass
+    logits = decoder(text_embeddings, img_features)
+    
+    print("\nTest completed successfully!")
+    print(f"Input shapes:")
+    print(f"Image features: {img_features.shape}")
+    print(f"Text embeddings: {text_embeddings.shape}")
+    print(f"Output logits: {logits.shape}")
         
 
